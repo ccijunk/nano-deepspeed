@@ -237,8 +237,11 @@ def main() -> None:
     device = torch.device(args.device)
     if device.type == "cuda" and not torch.cuda.is_available():
         raise SystemExit(f"--device cuda but torch.cuda.is_available() is False ({torch.version.cuda=})")
-    if args.tp_size > 1 and not dist.is_initialized():
-        init_distributed()  # tp 建模需要 tp_group，必须先于 initialize 的懒初始化
+    # 显式 gloo 且统一在此预初始化：GPU pod（cuda 可用）上 engine 懒初始化默认选 nccl，
+    # 而 loss 日志 all_reduce 是 CPU tensor（nccl 不支持 → V9 实测 RuntimeError）。
+    # NCCL 留给 T5 由消费者显式选择。tp 建模需要 tp_group，也必须先于 initialize 懒初始化。
+    if not dist.is_initialized():
+        init_distributed("gloo")
     tp_group = init_tp_groups(args.tp_size)
     world_size = dist.get_world_size() if dist.is_initialized() else 1
     rank = dist.get_rank() if dist.is_initialized() else 0
